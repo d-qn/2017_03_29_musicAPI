@@ -1,0 +1,183 @@
+---
+title: ""
+author: "Duc-Quang Nguyen"
+date: " 2016"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    theme: simplex
+---
+#
+
+
+```{r setup, include=FALSE}
+artists.rdata <- "input/mjf_2017.RData"
+
+library(readr)
+library(tidyr)
+library(dplyr)
+library(magrittr)
+library(rvest)
+```
+
+```{r scraping helper, include = F}
+url <- 'http://www.montreuxjazzfestival.com/en/program.html'
+base.url <- 'http://www.montreuxjazzfestival.com'
+
+html <- read_html(url)
+
+# find all artist url
+artists.nodes <- html %>%  html_nodes(".prog-grid-event li span a")
+
+artists <- paste0(base.url, artists.nodes %>% html_attr('href'))
+names(artists)  <- artists.nodes %>% html_text()
+
+artists <- artists[!duplicated(artists)]
+
+results <- sapply(artists, function(aurl) {
+  cat("\n", aurl)
+   #aurl <- artists[i]
+  ahtml <- read_html(aurl)
+  
+   style <- ahtml %>%  html_nodes (".content-bodyside-label") %>% html_text()
+   style <- style[grepl("Style", style)]
+   if(!identical(style, character(0))) {
+     styles <- gsub(" *", "", strsplit(style, "\n")[[1]][3])
+     strsplit(styles, "/")[[1]]       
+   } else {
+     NA
+   }
+})
+
+save(results, file = "input/mjf_scrapedGenres_2017.RData")
+load("input/mjf_scrapedGenres_2017.RData")
+
+length(results)
+
+na.idx <- which(results == 'NA'| is.na(results))
+length(results[na.idx])
+
+results_all <- results
+results <- results[-na.idx]
+sum(sapply(results, function(res) grepl("Jazz", paste0(res, collapse = " "))))
+styles <- unlist(results)
+
+# hack fix
+styles <- gsub("(HipHop|Rap)", 'Hip-Hop', styles)
+styles <- gsub("(Classic|Classique|ModernClassical|Classicalal)", 'Classical', styles)
+styles <- gsub("(ElectroHouse|House|Techno|MinimalTechno|MinimalElectronic|Electro|Electronicnic)", 'Electronic', styles)
+styles <- gsub("(NeoSoul|Soul-Jazz)", 'Soul', styles)
+styles <- gsub("IndiePop", 'Pop', styles)
+styles <- gsub("IndieRock", 'Rock', styles)
+
+styles <- gsub("Electronicnic", 'Electronic', styles)
+styles <- gsub("Classicalal", 'Classical', styles)
+styles <- as.data.frame(table(styles))
+
+write.csv(styles, "input/mjf_stylesCleaned.csv", row.names = F)
+
+
+```
+
+```{r download pics}
+picLinks <- sapply(artists, function(aurl) {
+  cat("\n", aurl)
+  ahtml <- read_html(aurl)
+  ahtml %>% html_node(".detail-img img") %>% html_attr("src")
+})
+names(picLinks) <- gsub("\\/", "", names(picLinks))
+
+## download all the artists pictures
+save_image <- function(url, aname){
+  image <- try(image_read(url), silent = TRUE)
+  if(class(image)[1] != "try-error"){
+    image %>%
+      image_scale("250x250") %>%
+      image_write(paste0("data/pics/", aname, ".jpg"))
+  }
+}
+for(i in 1:length(picLinks)) {
+  save_image(picLinks[i], names(picLinks)[i])
+}
+```
+
+```{r spotify rank artists by their popularity}
+loadOauth <- T
+app_id <- 'spotify in R'
+client_id <- 'f8e4c7ba11fe4a5498f7788f9b2c475e'
+client_secret <- '2ffb3a6aa4b84d4988dbf58d8dd98a3b'
+
+library(readr)
+library(tidyr)
+library(dplyr)
+library(magrittr)
+library(stringr)
+library(httr)
+
+library(Rspotify)
+
+# spotify API helpers
+myGetArtist <- function (id) {
+  req <- jsonlite::fromJSON(paste0("https://api.spotify.com/v1/artists/", id))
+  
+  if(length(req) > 0) {
+    return(list(id = req$id, 
+                url = req$external_urls$spotify,
+                followers = req$followers$total,
+                genres = req$genres,
+                images = req$images,
+                popularity = req$popularity, 
+                artist = req$name)
+    )    
+  } else {
+    NULL
+  }
+}
+mySearchArtist <- function (artistName) {
+    req <- jsonlite::fromJSON(paste0("https://api.spotify.com/v1/search?q=", 
+        gsub(" ", "+", artistName), "&type=artist"))
+    artist <- req$artists$items[, c("id", "name", "popularity", 
+        "genres", "type")]
+    artist$followers <- as.numeric(req$artists$items$followers$total)
+    return(artist)
+}
+
+
+results <- lapply(names(artists), function(art) {
+  cat("\n\n", "Fetch artist: ", art)
+  id <- try(mySearchArtist(gsub(" ", "+", art)), silent = T)
+  if(class(id)[1] !=  "try-error") {
+    if(length(id) == 1) {
+      result <- myGetArtist(id)   
+    }
+    if(nrow(id) > 1) {
+      cat("\n\t", nrow(id)," matchs, the top is: ", id[1,'name'])
+      result <- myGetArtist(id[1,'id'])
+    } 
+    if(nrow(id) == 0) {
+      warning("\n\t", " artist not found!!")
+      result <- NULL
+    }
+    result   
+  } else {
+    warning("\n\t", " nothing found!!")
+    NULL
+  }
+})
+
+names(results) <- names(artists)
+names(results)[which(sapply(results, is.null))]
+save(results, artists, file = artists.rdata)
+
+results <- results[-which(sapply(results, is.null))]
+
+spotify <- do.call(rbind, lapply(results, function(res) {
+  cat("\n", res$artist)
+  data.frame(artist = res$artist, popularity = res$popularity, genres = paste0(res$genres, collapse = ", "))
+}))
+rownames(spotify) <- NULL
+spotify %<>% arrange(desc(popularity))
+
+write.csv(spotify, "input/sorted_artists.csv")
+```
