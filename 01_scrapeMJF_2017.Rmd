@@ -103,10 +103,6 @@ for(i in 1:length(picLinks)) {
 ```
 
 ```{r spotify rank artists by their popularity}
-loadOauth <- T
-app_id <- 'spotify in R'
-client_id <- 'f8e4c7ba11fe4a5498f7788f9b2c475e'
-client_secret <- '2ffb3a6aa4b84d4988dbf58d8dd98a3b'
 
 library(readr)
 library(tidyr)
